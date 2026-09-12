@@ -36,3 +36,8 @@ export async function listExecutions() {
   const res = await fetch(`${BASE}/executions`)
   return handle(res)
 }
+
+export async function getMetrics() {
+  const res = await fetch(`${BASE}/metrics`)
+  return handle(res)
+}

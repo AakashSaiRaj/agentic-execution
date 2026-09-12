@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -56,6 +57,14 @@ class Task(Base, TimestampMixin):
     next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # --- Phase 4: observability -------------------------------------------
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     execution: Mapped["Execution"] = relationship(back_populates="tasks")
     result: Mapped[Optional["TaskResult"]] = relationship(

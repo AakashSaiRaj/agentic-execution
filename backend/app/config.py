@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     sse_poll_interval_seconds: float = 0.75
     sse_max_seconds: int = 600
 
+    # --- Tools (Phase 4) ---------------------------------------------------
+    tools_enabled: bool = True
+    tool_timeout_seconds: float = 10.0
+    agent_max_tool_iterations: int = 3
+    fetch_max_bytes: int = 20000  # cap for the URL fetch tool
+
     # --- Logging format ----------------------------------------------------
     log_format: str = "text"  # text | json
 

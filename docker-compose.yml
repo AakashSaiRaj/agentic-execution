@@ -46,6 +46,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       CORS_ORIGINS: "*"
     depends_on:
       db:
@@ -65,11 +66,17 @@ services:
       REDIS_URL: redis://redis:6379/0
       EXECUTION_MODE: queue
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      TASK_MAX_RETRIES: ${TASK_MAX_RETRIES:-3}
+      TASK_TIMEOUT_SECONDS: ${TASK_TIMEOUT_SECONDS:-30}
+      TOOLS_ENABLED: ${TOOLS_ENABLED:-true}
+      TOOL_TIMEOUT_SECONDS: ${TOOL_TIMEOUT_SECONDS:-10}
+      AGENT_MAX_TOOL_ITERATIONS: ${AGENT_MAX_TOOL_ITERATIONS:-3}
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_MODEL: ${LLM_MODEL:-mock-model}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     depends_on:
       db:
         condition: service_healthy

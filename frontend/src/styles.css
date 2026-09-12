@@ -314,6 +314,10 @@ button:disabled {
   background: #dbeafe;
   color: #1d4ed8;
 }
+.badge-retrying {
+  background: #fef3c7;
+  color: #b45309;
+}
 .badge-completed {
   background: #dcfce7;
   color: #15803d;
@@ -368,4 +372,199 @@ button:disabled {
 .muted {
   color: var(--muted);
   font-size: 14px;
+}
+
+.attempts {
+  color: #b45309;
+  font-weight: 600;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+/* Activity log */
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.activity-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.activity-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  min-width: 68px;
+}
+
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.act-running .activity-dot {
+  background: #1d4ed8;
+}
+.act-retrying .activity-dot {
+  background: #b45309;
+}
+.act-completed .activity-dot {
+  background: #15803d;
+}
+.act-failed .activity-dot {
+  background: #b91c1c;
+}
+
+.activity-text {
+  color: #334155;
+}
+
+/* Execution stats */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.stat {
+  flex: 1 1 auto;
+  min-width: 84px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Timeline */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tl-label {
+  width: 150px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #334155;
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 16px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tl-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 6px;
+  background: #1d4ed8;
+}
+
+.tl-bar.tl-completed {
+  background: #15803d;
+}
+.tl-bar.tl-failed {
+  background: #b91c1c;
+}
+.tl-bar.tl-running {
+  background: #1d4ed8;
+}
+.tl-bar.tl-retrying {
+  background: #b45309;
+}
+
+.tl-waiting {
+  font-size: 11px;
+  color: var(--muted);
+  padding-left: 6px;
+  line-height: 16px;
+}
+
+/* Per-task meta */
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.task-meta span {
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+/* Platform metrics */
+.metrics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.metrics-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #334155;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.metrics-list li:last-child {
+  border-bottom: none;
+}
+
+.metrics-list b {
+  font-variant-numeric: tabular-nums;
 }

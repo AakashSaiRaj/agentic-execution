@@ -1,21 +1,23 @@
 """Phase 3 reliability tests: state transitions, idempotency, retries, timeout."""
 import time
 
+from app.agents.base import AgentOutput
 from app.enums import ExecutionStatus, TaskStatus
 from app.models import Execution, Task, TaskResult
 from app.services import scheduler
 from tests.conftest import reload
 
 
-class _Output:
-    def __init__(self, text):
-        self.text = text
-        self.total_tokens = len(text)
-
-
 class _OkAgent:
     def run(self, description, context=""):
-        return _Output("ok output")
+        return AgentOutput(
+            text="ok output",
+            prompt_tokens=5,
+            completion_tokens=5,
+            total_tokens=10,
+            tool_calls=0,
+            model="mock-model",
+        )
 
 
 class _FailingAgent:
@@ -26,7 +28,7 @@ class _FailingAgent:
 class _SlowAgent:
     def run(self, description, context=""):
         time.sleep(0.6)  # exceeds TASK_TIMEOUT_SECONDS (0.3) in tests
-        return _Output("late")
+        return AgentOutput(text="late", total_tokens=1, model="mock-model")
 
 
 # ---------------------------------------------------------------------------

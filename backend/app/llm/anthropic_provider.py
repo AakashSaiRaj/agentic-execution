@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .base import LLMProvider, LLMResponse
+from .base import LLMProvider, LLMResponse, ToolCall
 
 
 class AnthropicProvider(LLMProvider):
@@ -57,5 +57,79 @@ class AnthropicProvider(LLMProvider):
             prompt_tokens=input_tokens,
             completion_tokens=output_tokens,
             total_tokens=total,
+            raw=resp,
+        )
+
+    def chat(self, messages, *, system=None, tools=None) -> LLMResponse:
+        api_messages = []
+        for message in messages:
+            role = message.get("role")
+            if role == "assistant" and message.get("tool_calls"):
+                content = []
+                if message.get("content"):
+                    content.append({"type": "text", "text": message["content"]})
+                for tc in message["tool_calls"]:
+                    content.append(
+                        {"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["arguments"]}
+                    )
+                api_messages.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                api_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": message.get("tool_call_id"),
+                                "content": message.get("content", ""),
+                            }
+                        ],
+                    }
+                )
+            else:
+                api_messages.append({"role": role or "user", "content": message.get("content", "")})
+
+        kwargs = dict(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            system=system or "",
+            messages=api_messages,
+        )
+        if tools:
+            kwargs["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.parameters}
+                for t in tools
+            ]
+
+        resp = self._client.messages.create(**kwargs)
+        text_parts = []
+        tool_calls = []
+        for block in getattr(resp, "content", []):
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                text_parts.append(getattr(block, "text", ""))
+            elif block_type == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=getattr(block, "id", ""),
+                        name=getattr(block, "name", ""),
+                        arguments=getattr(block, "input", {}) or {},
+                    )
+                )
+        usage = getattr(resp, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "output_tokens", None)
+        total = None
+        if input_tokens is not None and output_tokens is not None:
+            total = input_tokens + output_tokens
+        return LLMResponse(
+            text="".join(text_parts),
+            model=self.model,
+            prompt_tokens=input_tokens,
+            completion_tokens=output_tokens,
+            total_tokens=total,
+            tool_calls=tool_calls,
+            finish_reason=getattr(resp, "stop_reason", None),
             raw=resp,
         )

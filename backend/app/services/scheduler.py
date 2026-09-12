@@ -13,11 +13,13 @@ are recovered by ``recover_stale_tasks`` (a lease/heartbeat on RUNNING tasks).
 """
 from __future__ import annotations
 
+import contextvars
 import random
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import timedelta
+from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +30,7 @@ from ..database import SessionLocal
 from ..enums import ExecutionStatus, TaskStatus
 from ..jobqueue import enqueue_task, push_dead_letter, schedule_task
 from ..llm.factory import get_llm_provider
+from ..llm.pricing import estimate_cost
 from ..logging_config import bind_log_context, clear_log_context, get_logger
 from ..models import Execution, Task, TaskResult
 from ..models.base import utcnow
@@ -36,6 +39,17 @@ from .executor import TaskOutcome
 from .planner import Planner
 
 logger = get_logger(__name__)
+
+
+def _ms_between(start, end) -> Optional[int]:
+    """Milliseconds between two UTC datetimes, tolerant of naive vs aware (SQLite)."""
+    if start is None or end is None:
+        return None
+    if start.tzinfo is not None:
+        start = start.replace(tzinfo=None)
+    if end.tzinfo is not None:
+        end = end.replace(tzinfo=None)
+    return max(0, int((end - start).total_seconds() * 1000))
 
 # A task can be picked up when freshly planned (PENDING) or scheduled for retry.
 _CLAIMABLE = (TaskStatus.PENDING.value, TaskStatus.RETRYING.value)
@@ -86,6 +100,12 @@ def plan_execution(execution_id: uuid.UUID) -> None:
         db.commit()
 
         _guard_execution(db, execution_id, ExecutionStatus.PLANNING, ExecutionStatus.RUNNING)
+        db.execute(
+            update(Execution)
+            .where(Execution.id == execution_id, Execution.started_at.is_(None))
+            .values(started_at=utcnow())
+        )
+        db.commit()
         logger.info("planned %d task(s); scheduling", len(subtasks))
         schedule_execution(db, execution_id)
     except Exception as exc:  # noqa: BLE001
@@ -109,13 +129,14 @@ def execute_task(task_id: uuid.UUID) -> None:
             return
 
         execution_id = task.execution_id
-        bind_log_context(execution_id=execution_id, task_id=task_id)
+        bind_log_context(execution_id=execution_id, task_id=task_id, agent_type=task.agent_type)
 
         # Concurrency-safe claim: only the worker that flips PENDING/RETRYING ->
         # RUNNING proceeds. Duplicate deliveries are no-ops.
         if not _claim_task(db, task_id):
             logger.info("task not claimable; skipping (duplicate delivery)")
             return
+        _mark_started(db, task_id)
         db.refresh(task)
 
         # Idempotency: if a result already exists (e.g. a prior attempt actually
@@ -148,8 +169,19 @@ def execute_task(task_id: uuid.UUID) -> None:
             schedule_execution(db, execution_id)
             return
 
-        _persist_success(db, task_id, output.text)
-        logger.info("COMPLETED")
+        cost = estimate_cost(output.model, output.prompt_tokens, output.completion_tokens)
+        _persist_success(
+            db,
+            task_id,
+            output.text,
+            total_tokens=output.total_tokens,
+            cost_usd=cost,
+            tool_calls=output.tool_calls,
+        )
+        logger.info(
+            "COMPLETED tokens=%s cost_usd=%.6f tool_calls=%d",
+            output.total_tokens, cost, output.tool_calls,
+        )
         schedule_execution(db, execution_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("worker error: %s", exc)
@@ -168,7 +200,10 @@ def _run_agent_with_timeout(agent, description: str, context: str, timeout: floa
     may linger, but idempotency guarantees at most one persisted result).
     """
     executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(agent.run, description, context)
+    # Propagate the log context (execution_id/task_id/agent) into the worker
+    # thread so tool-invocation logs are correlated too.
+    ctx = contextvars.copy_context()
+    future = executor.submit(ctx.run, agent.run, description, context)
     try:
         result = future.result(timeout=timeout)
         executor.shutdown(wait=False)
@@ -178,12 +213,23 @@ def _run_agent_with_timeout(agent, description: str, context: str, timeout: floa
         raise TaskTimeoutError(f"task exceeded timeout of {timeout}s")
 
 
-def _persist_success(db, task_id: uuid.UUID, output_text: str) -> None:
-    """Persist the result + mark COMPLETED idempotently.
+def _persist_success(
+    db,
+    task_id: uuid.UUID,
+    output_text: str,
+    *,
+    total_tokens: int = 0,
+    cost_usd: float = 0.0,
+    tool_calls: int = 0,
+) -> None:
+    """Persist the result + mark COMPLETED idempotently, recording metrics.
 
     The UNIQUE constraint on task_results.task_id guarantees at most one result
     per task even if two executions race.
     """
+    now = utcnow()
+    task = db.get(Task, task_id)
+    duration = _ms_between(task.started_at if task else None, now)
     try:
         db.add(TaskResult(task_id=task_id, output=output_text))
         db.flush()
@@ -195,7 +241,26 @@ def _persist_success(db, task_id: uuid.UUID, output_text: str) -> None:
             Task.id == task_id,
             Task.status.in_([TaskStatus.RUNNING.value, TaskStatus.RETRYING.value]),
         )
-        .values(status=TaskStatus.COMPLETED.value, error=None, updated_at=utcnow())
+        .values(
+            status=TaskStatus.COMPLETED.value,
+            error=None,
+            updated_at=now,
+            completed_at=now,
+            duration_ms=duration,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            tool_calls=tool_calls,
+        )
+    )
+    db.commit()
+
+
+def _mark_started(db, task_id: uuid.UUID) -> None:
+    """Stamp started_at on first run (kept across retries for total duration)."""
+    db.execute(
+        update(Task)
+        .where(Task.id == task_id, Task.started_at.is_(None))
+        .values(started_at=utcnow())
     )
     db.commit()
 
@@ -342,6 +407,9 @@ def schedule_execution(db, execution_id: uuid.UUID) -> None:
 
 def _finalize(db, execution: Execution) -> None:
     db.expire_all()
+    execution = db.get(Execution, execution.id)
+    if execution is None:
+        return
     tasks = db.scalars(select(Task).where(Task.execution_id == execution.id)).all()
     if not tasks:
         return
@@ -354,6 +422,10 @@ def _finalize(db, execution: Execution) -> None:
     if any(t.status in non_terminal for t in tasks):
         return
 
+    now = utcnow()
+    duration = _ms_between(execution.started_at, now)
+    total_tokens = sum((t.total_tokens or 0) for t in tasks)
+    total_cost = round(sum((t.cost_usd or 0.0) for t in tasks), 6)
     completed = [t for t in tasks if t.status == TaskStatus.COMPLETED.value]
 
     if len(completed) == len(tasks):
@@ -364,12 +436,19 @@ def _finalize(db, execution: Execution) -> None:
             .values(
                 status=ExecutionStatus.COMPLETED.value,
                 final_result=final_result,
-                updated_at=utcnow(),
+                updated_at=now,
+                completed_at=now,
+                duration_ms=duration,
+                total_tokens=total_tokens,
+                cost_usd=total_cost,
             )
         )
         db.commit()
         if result.rowcount:
-            logger.info("execution COMPLETED")
+            logger.info(
+                "execution COMPLETED duration_ms=%s tokens=%s cost_usd=%.6f",
+                duration, total_tokens, total_cost,
+            )
     else:
         failed = [t for t in tasks if t.status == TaskStatus.FAILED.value]
         summary = "; ".join(f"{t.agent_type}: {t.error or 'failed'}" for t in failed)
@@ -379,7 +458,11 @@ def _finalize(db, execution: Execution) -> None:
             .values(
                 status=ExecutionStatus.FAILED.value,
                 error=f"{len(failed)} task(s) failed: {summary}",
-                updated_at=utcnow(),
+                updated_at=now,
+                completed_at=now,
+                duration_ms=duration,
+                total_tokens=total_tokens,
+                cost_usd=total_cost,
             )
         )
         db.commit()

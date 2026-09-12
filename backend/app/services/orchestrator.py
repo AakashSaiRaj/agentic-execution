@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
+
 from ..config import get_settings
 from ..database import SessionLocal
 from ..enums import ExecutionStatus, TaskStatus
@@ -16,7 +18,7 @@ from ..logging_config import get_logger
 from ..models import Execution, Task
 from ..models.base import utcnow
 from .aggregator import Aggregator
-from .executor import SequentialExecutor
+from .executor import SequentialExecutor, _ms_between
 from .planner import Planner
 
 logger = get_logger(__name__)
@@ -60,11 +62,20 @@ def run_execution(execution_id: uuid.UUID) -> None:
         logger.info("[execution_id=%s] planned %d task(s)", execution.id, len(tasks))
 
         # --- Execution -----------------------------------------------------
+        execution.started_at = utcnow()
         _set_execution_status(db, execution, ExecutionStatus.RUNNING)
         executor = SequentialExecutor(db, llm)
         result = executor.execute(execution.id, tasks)
 
         # --- Aggregation ---------------------------------------------------
+        db.expire_all()
+        fresh_tasks = db.scalars(select(Task).where(Task.execution_id == execution.id)).all()
+        now = utcnow()
+        execution.completed_at = now
+        execution.duration_ms = _ms_between(execution.started_at, now)
+        execution.total_tokens = sum((t.total_tokens or 0) for t in fresh_tasks)
+        execution.cost_usd = round(sum((t.cost_usd or 0.0) for t in fresh_tasks), 6)
+
         if result.all_completed:
             final_result = Aggregator().aggregate(execution.user_request, result.outcomes)
             execution.final_result = final_result

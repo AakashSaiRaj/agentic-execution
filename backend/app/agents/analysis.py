@@ -7,6 +7,7 @@ from .base import Agent
 
 class AnalysisAgent(Agent):
     agent_type = AgentType.ANALYSIS
+    tool_names = ["calculator", "fetch_url"]
 
     @property
     def system_prompt(self) -> str:

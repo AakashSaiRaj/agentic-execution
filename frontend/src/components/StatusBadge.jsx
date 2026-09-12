@@ -2,6 +2,7 @@ const CLASS_BY_STATUS = {
   PENDING: 'badge-pending',
   PLANNING: 'badge-planning',
   RUNNING: 'badge-running',
+  RETRYING: 'badge-retrying',
   COMPLETED: 'badge-completed',
   FAILED: 'badge-failed',
 }

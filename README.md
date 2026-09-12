@@ -1,11 +1,19 @@
 # AI Agent Execution Platform
 
 Decompose a complex task into subtasks, execute specialized agents, and return an
-aggregated result. This repository is being built in phases; **Phase 1 (MVP) and
-Phase 2 (distributed async execution) are complete.**
+aggregated result. This repository is being built in phases; **Phases 1–4 are
+complete** (MVP, distributed async execution, reliability + real-time, and tools
++ observability).
 
 - **Backend:** Python + FastAPI + SQLAlchemy
 - **Queue / workers:** Redis job queue + distributed worker processes (Phase 2)
+- **Reliability:** retries w/ exponential backoff, timeouts, idempotency,
+  dead-letter queue, crash recovery (Phase 3)
+- **Real-time:** Server-Sent Events stream to the UI (Phase 3)
+- **Tools:** agents invoke registered tools (calculator, web search, URL fetch)
+  via structured tool calling (Phase 4)
+- **Observability:** execution/task durations, token usage, estimated cost,
+  tool-call counts, and a `/metrics` endpoint (Phase 4)
 - **Database:** SQLite by default (zero setup); Postgres for a production-style run
 - **Frontend:** React (Vite)
 - **LLM:** provider abstraction with a built-in **mock** provider (no API key needed),
@@ -14,8 +22,8 @@ Phase 2 (distributed async execution) are complete.**
 > Two execution modes: **`inline`** (Phase 1 — plan + run sequentially in-process,
 > no Redis) and **`queue`** (Phase 2 — enqueue jobs to Redis; workers execute
 > independent tasks concurrently). The Podman stack runs in `queue` mode. Later
-> phases add retries/timeouts/SSE (Phase 3), tools + observability (Phase 4) and
-> production polish (Phase 5). See [Roadmap](#roadmap).
+> phases add tools + observability (Phase 4) and production polish (Phase 5). See
+> [Roadmap](#roadmap) and [Failure handling](#failure-handling--reliability-phase-3).
 
 ---
 
@@ -67,12 +75,15 @@ sequential design (`inline` mode) is still available for a zero-dependency run.
 │   │   ├── models/           # SQLAlchemy models (execution, task, task_result)
 │   │   ├── schemas/          # Pydantic request/response models
 │   │   ├── services/         # planner, executor, aggregator, orchestrator, scheduler
+│   │   ├── tools/            # tool registry + calculator / web_search / fetch_url (Phase 4)
+│   │   ├── observability/    # DB-derived metrics collector (Phase 4)
 │   │   ├── jobqueue.py       # Redis job queue (Phase 2)
 │   │   ├── worker.py         # distributed worker process (Phase 2)
 │   │   ├── config.py         # env-driven settings
 │   │   ├── database.py       # engine + session
 │   │   └── main.py           # FastAPI app
-│   ├── alembic/              # migrations (0001 schema, 0002 scheduling columns)
+│   ├── alembic/              # migrations (0001..0004)
+│   ├── tests/                # pytest (reliability + tools)
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── entrypoint.sh
@@ -180,8 +191,18 @@ All configuration is via environment variables (see `backend/.env.example` and
 | `EXECUTION_MODE` | `inline` | `inline` (in-process) or `queue` (Redis + workers) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (queue mode) |
 | `WORKER_CONCURRENCY` | `4` | Consumer threads per worker process |
+| `TASK_MAX_RETRIES` | `3` | Retries after the first attempt (total tries = N+1) |
+| `TASK_TIMEOUT_SECONDS` | `30` | Hard timeout per task execution |
+| `RETRY_BACKOFF_BASE_SECONDS` / `RETRY_BACKOFF_MAX_SECONDS` | `1` / `30` | Exponential backoff bounds |
+| `RETRY_BACKOFF_JITTER` | `true` | Add ±20% jitter to backoff |
+| `TASK_LEASE_SECONDS` | `90` | RUNNING lease; longer-stuck tasks are recovered |
+| `TOOLS_ENABLED` | `true` | Enable agent tool calling |
+| `TOOL_TIMEOUT_SECONDS` | `10` | Per-tool execution timeout |
+| `AGENT_MAX_TOOL_ITERATIONS` | `3` | Max tool-call rounds per agent |
+| `FETCH_MAX_BYTES` | `20000` | Truncation cap for the fetch_url tool |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | — | Required only for real providers |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_FORMAT` | `text` | `text` or `json` (structured logs) |
 | `CORS_ORIGINS` | `*` | Comma-separated origins, or `*` |
 
 ### Using a real LLM
@@ -221,6 +242,22 @@ curl http://localhost:8000/api/executions/<execution_id>/tasks
 curl http://localhost:8000/api/executions
 ```
 
+**Stream live updates (SSE — no polling)**
+```bash
+curl -N http://localhost:8000/api/executions/<execution_id>/events
+```
+
+**Dead-letter queue (permanently-failed jobs)**
+```bash
+curl http://localhost:8000/api/dead-letter
+```
+
+**Metrics** (JSON for the UI, Prometheus text for scrapers)
+```bash
+curl http://localhost:8000/api/metrics
+curl http://localhost:8000/metrics
+```
+
 **Health**
 ```bash
 curl http://localhost:8000/health
@@ -235,8 +272,10 @@ curl http://localhost:8000/health
   It parses defensively and falls back to a sensible default decomposition.
 - **Agents** (`agents/`) — `research`, `analysis`, `summarization` — each wrap the
   LLM with a role-specific system prompt.
-- **Scheduler** (`services/scheduler.py`, Phase 2) claims and runs a single task,
-  then enqueues newly-unblocked dependents and finalizes the execution.
+- **Scheduler** (`services/scheduler.py`) claims and runs a single task (with a
+  timeout), persists its result idempotently, retries with backoff or dead-letters
+  on exhaustion, enqueues newly-unblocked dependents, and finalizes the execution.
+  Its reaper recovers tasks from crashed workers.
 - **Executor** (`services/executor.py`) runs tasks in order for `inline` mode.
 - **Aggregator** (`services/aggregator.py`) synthesizes the final result once all
   tasks are done (preferring the summarization output, with supporting work appended).
@@ -287,12 +326,112 @@ number of workers is safe.
 
 ---
 
+## Failure handling & reliability (Phase 3)
+
+Distributed work fails in messy ways — a model call errors, a request hangs, a
+worker crashes mid-task, or the same job is delivered twice. Phase 3 makes the
+platform tolerate all of these.
+
+**Retries with exponential backoff.** A failed task is retried up to
+`TASK_MAX_RETRIES` times. Between attempts it waits
+`base * 2^(attempt-1)` seconds (capped, with jitter), so a flaky dependency isn't
+hammered. *Why:* transient failures (timeouts, rate limits, blips) are common and
+usually succeed on retry; backoff prevents retry storms.
+
+**Timeouts.** Each task runs under a hard `TASK_TIMEOUT_SECONDS` limit. A hung
+call is abandoned and treated as a failure (then retried). *Why:* without a
+timeout, one stuck request pins a worker forever and the execution never
+finishes.
+
+**Idempotency.** `task_results.task_id` is `UNIQUE`, so a task can produce **at
+most one** result no matter how many times it is retried or double-delivered.
+Before running, a worker also short-circuits if a result already exists. *Why:*
+at-least-once delivery + retries mean the same task can run more than once;
+idempotency keeps that from creating duplicate or conflicting output.
+
+**Dead-letter queue.** When retries are exhausted the task is marked `FAILED` and
+a record is pushed to a Redis dead-letter list (`GET /api/dead-letter`). *Why:*
+permanently-failed work should be visible and inspectable, not silently dropped.
+
+**Crash recovery (lease/heartbeat).** Claiming a task stamps `updated_at`. A
+reaper thread finds tasks stuck in `RUNNING` past `TASK_LEASE_SECONDS` (a crashed
+worker) and requeues them (or fails them if exhausted). *Why:* a claimed task
+whose worker dies would otherwise block its execution forever.
+
+**Delayed-retry queue.** Retries are scheduled in a Redis sorted set keyed by
+run-at time; a promoter thread moves due items back onto the main queue. This is
+how backoff is realized without blocking a worker.
+
+**Real-time updates (SSE).** `GET /api/executions/{id}/events` streams execution
++ task state to the browser via Server-Sent Events, so the UI shows *started /
+completed / failed / retrying / final aggregation* live without polling.
+
+**Structured logging.** Every log line carries `execution_id` and `task_id`
+(text or `LOG_FORMAT=json`), so a single execution can be traced across workers.
+
+> **Try it:** submit a request containing the word `force_fail` — the mock
+> provider makes agent calls fail, so you can watch retries in the activity log
+> and the task land in the dead-letter queue.
+
+### Tests
+
+```bash
+cd backend && source .venv/bin/activate
+pytest -q
+```
+Covers retry behaviour, timeout handling, idempotency, task state transitions,
+and crash recovery.
+
+---
+
+## Tools & tool calling (Phase 4)
+
+Agents don't just prompt an LLM — they can call **tools** through structured
+tool/function calling, turning the platform into a real agent runtime rather
+than a task queue.
+
+**Registered tools** (`app/tools/`):
+- `calculator` — safe arithmetic (AST-based; no `eval`).
+- `web_search` — top-result snippets (offline mock by default; swap in a real
+  backend).
+- `fetch_url` — fetch text at an http(s) URL (real network, size-capped).
+
+**How it works.** Each agent advertises a set of tools (research →
+web_search/fetch_url, analysis → calculator/fetch_url, summarization → none).
+The agent runs a **tool-calling loop**: the LLM may return tool calls, which are
+executed and fed back as observations, until the model produces a final answer
+(bounded by `AGENT_MAX_TOOL_ITERATIONS`). Every tool runs under
+`TOOL_TIMEOUT_SECONDS`; failures and timeouts are returned to the agent as safe
+error observations rather than crashing the task. Each invocation is logged.
+
+The abstraction is provider-agnostic: the **mock** provider performs the loop
+offline (deterministically), while the OpenAI and Anthropic providers map it to
+their native function-calling APIs.
+
+## Observability (Phase 4)
+
+Tracked per task and per execution and persisted to the DB: **duration**,
+**LLM token usage**, **estimated cost** (from a small pricing table), and
+**tool-call counts**. Logs are structured with `execution_id`, `task_id` and
+`agent`.
+
+- `GET /api/metrics` — JSON summary (counts by status, avg/max durations, total
+  tokens, total estimated cost, tool calls, queue depths).
+- `GET /metrics` — the same data in Prometheus text-exposition format.
+
+Metrics are **derived from the database on demand** (accurate across the API and
+all workers) plus live Redis queue depths — no separate metrics store to run.
+The UI shows an execution **timeline**, per-task stats, and a platform-metrics
+panel.
+
+---
+
 ## Roadmap
 
 - **Phase 1:** end-to-end MVP, sequential execution ✅
 - **Phase 2:** Redis job queue + distributed workers, concurrent tasks, real-time UI ✅
-- **Phase 3:** retries, exponential backoff, timeouts, idempotency, dead-letter queue, SSE
-- **Phase 4:** agent tools (web search, calculator, fetch), observability + `/metrics`
+- **Phase 3:** retries, backoff, timeouts, idempotency, dead-letter queue, crash recovery, SSE ✅
+- **Phase 4:** agent tools (calculator, web search, fetch) + observability / `/metrics` ✅
 - **Phase 5:** auth, rate limiting, health checks, CI, integration + load tests
 
 Built and tested one phase at a time.

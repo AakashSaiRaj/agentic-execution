@@ -4,9 +4,10 @@ An Execution represents a single user request that gets planned into subtasks
 and executed end to end.
 """
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import String, Text, Uuid
+from sqlalchemy import DateTime, Float, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..enums import ExecutionStatus
@@ -23,6 +24,13 @@ class Execution(Base, TimestampMixin):
     )
     final_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # --- Phase 4: observability -------------------------------------------
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     tasks: Mapped[List["Task"]] = relationship(
         back_populates="execution",

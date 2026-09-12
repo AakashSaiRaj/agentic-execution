@@ -11,9 +11,21 @@ import json
 import re
 from typing import Optional
 
-from .base import LLMProvider, LLMResponse
+from .base import LLMProvider, LLMResponse, ToolCall
 
 _REQUEST_RE = re.compile(r'"""(.*?)"""', re.DOTALL)
+# Detects an arithmetic expression like "12 * (3 + 4)" or "100 / 4" in free text.
+_EXPR_RE = re.compile(r"[-+(]?\s*\d[\d\s+\-*/%().]*[+\-*/%]\s*\d[\d\s+\-*/%().]*")
+
+
+def _extract_expression(text: str):
+    match = _EXPR_RE.search(text or "")
+    if not match:
+        return None
+    expr = match.group(0).strip()
+    if any(op in expr for op in "+-*/%") and any(ch.isdigit() for ch in expr):
+        return expr
+    return None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -126,3 +138,81 @@ class MockLLMProvider(LLMProvider):
 
     def _generic(self, prompt: str) -> str:
         return f"[mock] {_clip(prompt, 240)}"
+
+    # -- tool-calling chat --------------------------------------------------
+    def chat(self, messages, *, system=None, tools=None) -> LLMResponse:
+        system_l = (system or "").lower()
+        tool_names = {getattr(t, "name", None) for t in (tools or [])}
+        user_text = next(
+            (m.get("content", "") for m in messages if m.get("role") == "user"), ""
+        )
+
+        # Test hook (same as complete): agent calls containing "force_fail" raise.
+        if "planning assistant" not in system_l and "force_fail" in (user_text or "").lower():
+            raise RuntimeError("forced failure (mock provider saw 'force_fail')")
+
+        tool_outputs = [m.get("content", "") for m in messages if m.get("role") == "tool"]
+
+        # First turn: maybe request a tool call.
+        if tools and not tool_outputs:
+            call = self._decide_tool_call(system_l, user_text, tool_names)
+            if call is not None:
+                prompt_tokens = _estimate_tokens((system or "") + user_text)
+                return LLMResponse(
+                    model=self.model,
+                    tool_calls=[call],
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=0,
+                    total_tokens=prompt_tokens,
+                    finish_reason="tool_calls",
+                )
+
+        # Otherwise: produce the final answer (using any tool observations).
+        text = self._final_text(system_l, user_text, tool_outputs)
+        prompt_tokens = _estimate_tokens((system or "") + user_text + "".join(tool_outputs))
+        completion_tokens = _estimate_tokens(text)
+        return LLMResponse(
+            text=text,
+            model=self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            finish_reason="stop",
+        )
+
+    def _decide_tool_call(self, system_l: str, user_text: str, tool_names) -> Optional[ToolCall]:
+        if "research agent" in system_l and "web_search" in tool_names:
+            return ToolCall(
+                id="call_ws", name="web_search", arguments={"query": _clip(self._task_line(user_text), 120)}
+            )
+        if "analysis agent" in system_l and "calculator" in tool_names:
+            expr = _extract_expression(user_text)
+            if expr:
+                return ToolCall(id="call_calc", name="calculator", arguments={"expression": expr})
+        return None
+
+    def _final_text(self, system_l: str, user_text: str, tool_outputs) -> str:
+        task = self._task_line(user_text)
+        observations = ""
+        if tool_outputs:
+            observations = "\n\nTool observations:\n" + "\n".join(
+                f"- {_clip(o, 160)}" for o in tool_outputs
+            )
+        if "research agent" in system_l:
+            return (
+                f"[mock:research] Findings for \u201c{task}\u201d, informed by tool results."
+                + observations
+                + "\n\n(Simulated mock output.)"
+            )
+        if "analysis agent" in system_l:
+            return (
+                f"[mock:analysis] Analysis of \u201c{task}\u201d: key insight, trade-off and risk."
+                + observations
+                + "\n\n(Simulated mock output.)"
+            )
+        if "summarization agent" in system_l:
+            return (
+                f"[mock:summary] Final answer for \u201c{task}\u201d: a clear, balanced conclusion "
+                "drawn from the research and analysis.\n\n(Simulated mock output.)"
+            )
+        return f"[mock] {_clip(user_text, 240)}"

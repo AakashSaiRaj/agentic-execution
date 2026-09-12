@@ -45,6 +45,12 @@ class ExecutionRead(BaseModel):
     status: ExecutionStatus
     final_result: Optional[str] = None
     error: Optional[str] = None
+    # Observability (Phase 4)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
     created_at: datetime
     updated_at: datetime
     tasks: List[TaskRead] = Field(default_factory=list)

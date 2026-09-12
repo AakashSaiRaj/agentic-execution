@@ -31,6 +31,13 @@ class TaskRead(BaseModel):
     attempts: int = 0
     next_attempt_at: Optional[datetime] = None
     error: Optional[str] = None
+    # Observability (Phase 4)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    tool_calls: int = 0
     created_at: datetime
     updated_at: datetime
     result: Optional[TaskResultRead] = None

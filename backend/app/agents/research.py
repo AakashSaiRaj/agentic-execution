@@ -7,6 +7,7 @@ from .base import Agent
 
 class ResearchAgent(Agent):
     agent_type = AgentType.RESEARCH
+    tool_names = ["web_search", "fetch_url"]
 
     @property
     def system_prompt(self) -> str:

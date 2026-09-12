@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .config import get_settings
 from .logging_config import configure_logging, get_logger
-from .api.routes import executions, health, system
+from .api.routes import executions, health, metrics, system
 
 configure_logging()
 settings = get_settings()
@@ -43,6 +43,7 @@ app.include_router(health.router)
 app.include_router(health.router, prefix="/api")
 app.include_router(executions.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+app.include_router(metrics.router)  # /metrics (Prometheus) + /api/metrics (JSON)
 
 
 @app.get("/", tags=["root"], summary="Service information")
