@@ -3,9 +3,9 @@
 A Task is a single subtask produced by the planner and executed by one agent.
 """
 import uuid
-from typing import Optional
+from typing import List, Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..enums import TaskStatus
@@ -28,6 +28,16 @@ class Task(Base, TimestampMixin):
     # to avoid the SQL reserved word "order".
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # --- Phase 2: distributed scheduling -----------------------------------
+    # order_index values of the tasks this task depends on (within the same
+    # execution). A task is only enqueued once all its dependencies COMPLETE.
+    depends_on: Mapped[Optional[List[int]]] = mapped_column(
+        JSON, nullable=True, default=list
+    )
+    # Set atomically to true when this task has been pushed to the queue, so it
+    # is never enqueued twice by concurrent scheduler passes.
+    enqueued: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     execution: Mapped["Execution"] = relationship(back_populates="tasks")
     result: Mapped[Optional["TaskResult"]] = relationship(

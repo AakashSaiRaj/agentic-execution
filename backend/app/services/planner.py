@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from ..enums import AgentType
@@ -24,6 +24,9 @@ _JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
 class PlannedSubtask:
     agent_type: AgentType
     description: str
+    # order_index values (within this plan) that must COMPLETE before this task
+    # can run. Empty => independent (eligible to run immediately / concurrently).
+    depends_on: List[int] = field(default_factory=list)
 
 
 class Planner:
@@ -60,8 +63,29 @@ class Planner:
         # Clamp to the configured maximum. (We keep at least what we have; the
         # fallback already guarantees a reasonable minimum.)
         subtasks = subtasks[: self.max_tasks]
+        self._assign_dependencies(subtasks)
         logger.info("Planner produced %d subtask(s).", len(subtasks))
         return subtasks
+
+    def _assign_dependencies(self, subtasks: List[PlannedSubtask]) -> None:
+        """Assign a fan-out/fan-in dependency structure.
+
+        Non-summarization tasks are left independent so they run concurrently.
+        Each summarization task depends on all earlier tasks, so it only runs
+        once the research/analysis it summarizes has completed (the join). Any
+        dependencies the LLM supplied are validated (must reference an earlier
+        task) and otherwise respected.
+        """
+        for index, subtask in enumerate(subtasks):
+            if subtask.depends_on:
+                subtask.depends_on = [
+                    d for d in subtask.depends_on if isinstance(d, int) and 0 <= d < index
+                ]
+                continue
+            if subtask.agent_type == AgentType.SUMMARIZATION:
+                subtask.depends_on = list(range(index))
+            else:
+                subtask.depends_on = []
 
     def _parse(self, text: str) -> List[PlannedSubtask]:
         data = self._load_json(text)
@@ -76,7 +100,11 @@ class Planner:
             if not description:
                 continue
             agent_type = AgentType.from_value(item.get("agent_type", "research"))
-            result.append(PlannedSubtask(agent_type=agent_type, description=description))
+            raw_deps = item.get("depends_on")
+            deps = [d for d in raw_deps if isinstance(d, int)] if isinstance(raw_deps, list) else []
+            result.append(
+                PlannedSubtask(agent_type=agent_type, description=description, depends_on=deps)
+            )
         return result
 
     @staticmethod

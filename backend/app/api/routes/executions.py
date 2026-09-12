@@ -8,11 +8,16 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...config import get_settings
 from ...database import get_db
 from ...enums import ExecutionStatus
+from ...jobqueue import enqueue_plan
+from ...logging_config import get_logger
 from ...models import Execution, Task
 from ...schemas import ExecutionCreate, ExecutionRead, ExecutionSummary, TaskRead
 from ...services.orchestrator import run_execution
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/executions", tags=["executions"])
 
@@ -36,9 +41,15 @@ def create_execution(
     db.commit()
     db.refresh(execution)
 
-    # Plan + execute asynchronously so the request returns immediately. The UI
-    # polls GET /executions/{id} to observe status transitions.
-    background_tasks.add_task(run_execution, execution.id)
+    # The request returns immediately; the UI polls GET /executions/{id} to
+    # observe status transitions.
+    settings = get_settings()
+    if settings.execution_mode.lower() == "queue":
+        # Phase 2: hand off to Redis; distributed workers plan and execute.
+        enqueue_plan(execution.id)
+    else:
+        # Phase 1 fallback: plan + execute in-process, sequentially.
+        background_tasks.add_task(run_execution, execution.id)
     return execution
 
 

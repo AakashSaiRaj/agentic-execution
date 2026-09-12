@@ -11,6 +11,9 @@ pydantic-settings==2.6.1
 # Postgres driver (used when DATABASE_URL points at Postgres)
 psycopg2-binary==2.9.10
 
+# Redis job queue (Phase 2: distributed workers)
+redis==5.2.1
+
 # HTTP client (used by optional real LLM providers / future tools)
 httpx==0.28.1
 

@@ -13,6 +13,8 @@ export default function ExecutionView({ execution }) {
 
   const { user_request, status, tasks = [], final_result, error } = execution
   const isWorking = !TERMINAL.has(status)
+  const completedCount = tasks.filter((t) => t.status === 'COMPLETED').length
+  const progressPct = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0
 
   return (
     <section className="card">
@@ -24,23 +26,46 @@ export default function ExecutionView({ execution }) {
       <p className="request">{user_request}</p>
       {isWorking && <p className="hint">Working… this updates automatically.</p>}
 
-      <h3>Subtasks</h3>
       {tasks.length === 0 ? (
-        <p className="muted">Planning subtasks…</p>
+        <>
+          <h3>Subtasks</h3>
+          <p className="muted">Planning subtasks…</p>
+        </>
       ) : (
-        <ol className="tasks">
-          {tasks.map((task) => (
-            <li key={task.id} className="task">
-              <div className="task-top">
-                <span className="agent">{task.agent_type}</span>
-                <StatusBadge status={task.status} />
-              </div>
-              <p className="task-desc">{task.description}</p>
-              {task.result && <pre className="output">{task.result.output}</pre>}
-              {task.error && <pre className="output error-text">{task.error}</pre>}
-            </li>
-          ))}
-        </ol>
+        <>
+          <div className="progress-row">
+            <h3>Subtasks</h3>
+            <span className="progress-label">
+              {completedCount}/{tasks.length} completed
+            </span>
+          </div>
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+
+          <ol className="tasks">
+            {tasks.map((task) => (
+              <li key={task.id} className="task">
+                <div className="task-top">
+                  <span className="agent">
+                    <span className="task-index">#{task.order_index}</span> {task.agent_type}
+                  </span>
+                  <StatusBadge status={task.status} />
+                </div>
+                <p className="task-desc">{task.description}</p>
+                {task.depends_on && task.depends_on.length > 0 ? (
+                  <div className="deps">
+                    depends on {task.depends_on.map((d) => `#${d}`).join(', ')}
+                  </div>
+                ) : (
+                  <div className="deps independent">independent (runs immediately)</div>
+                )}
+                {task.result && <pre className="output">{task.result.output}</pre>}
+                {task.error && <pre className="output error-text">{task.error}</pre>}
+              </li>
+            ))}
+          </ol>
+        </>
       )}
 
       {status === 'COMPLETED' && final_result && (

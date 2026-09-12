@@ -19,5 +19,4 @@ frontend/dist/
 .DS_Store
 *.swp
 
-# Project brief (kept local, not tracked)
 aim.txt

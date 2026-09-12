@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..enums import AgentType, TaskStatus
 
@@ -27,7 +27,13 @@ class TaskRead(BaseModel):
     description: str
     status: TaskStatus
     order_index: int
+    depends_on: List[int] = Field(default_factory=list)
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     result: Optional[TaskResultRead] = None
+
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _coerce_depends_on(cls, value):
+        return value or []

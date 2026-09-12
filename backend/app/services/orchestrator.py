@@ -50,6 +50,7 @@ def run_execution(execution_id: uuid.UUID) -> None:
                 description=subtask.description,
                 order_index=index,
                 status=TaskStatus.PENDING.value,
+                depends_on=list(subtask.depends_on or []),
             )
             db.add(task)
             tasks.append(task)

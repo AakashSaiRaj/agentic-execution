@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     planner_min_tasks: int = 2
     planner_max_tasks: int = 5
 
+    # --- Execution mode / distributed workers (Phase 2) --------------------
+    # "inline"  -> plan + execute sequentially in a FastAPI background task
+    #              (Phase 1 behaviour, no Redis required).
+    # "queue"   -> enqueue jobs to Redis; separate worker processes execute
+    #              tasks concurrently (Phase 2).
+    execution_mode: str = "inline"
+    redis_url: str = "redis://localhost:6379/0"
+    # Number of concurrent consumer loops a single worker process runs.
+    worker_concurrency: int = 4
+    # Blocking dequeue timeout (seconds); also how often workers check for shutdown.
+    worker_poll_timeout: int = 5
+
     # --- CORS --------------------------------------------------------------
     # Comma-separated list of allowed origins, or "*" for all.
     cors_origins: str = "*"

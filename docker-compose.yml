@@ -25,10 +25,22 @@ services:
       timeout: 5s
       retries: 12
 
+  redis:
+    image: docker.io/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   backend:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg2://agent:agent@db:5432/agent_platform
+      REDIS_URL: redis://redis:6379/0
+      EXECUTION_MODE: queue
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_MODEL: ${LLM_MODEL:-mock-model}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -38,8 +50,33 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
+
+  # Distributed workers. The backend applies migrations; workers wait for the
+  # schema, then consume jobs from Redis. Scale with: --scale worker=N
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://agent:agent@db:5432/agent_platform
+      REDIS_URL: redis://redis:6379/0
+      EXECUTION_MODE: queue
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-mock-model}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
 
   frontend:
     build: ./frontend
