@@ -1,0 +1,20 @@
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = [".venv", "build", "alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line length handled by formatter/reviewers
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end tests that require a running Redis (skipped otherwise)",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

@@ -15,5 +15,6 @@ until alembic upgrade head; do
   sleep 2
 done
 
-echo "Migrations applied. Starting API server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+echo "Migrations applied. Starting API server (workers=${UVICORN_WORKERS:-1})..."
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+  --workers "${UVICORN_WORKERS:-1}" --proxy-headers --forwarded-allow-ips "*"

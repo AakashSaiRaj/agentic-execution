@@ -151,8 +151,9 @@ def test_timeout_is_treated_as_failure(db, seed, queue_stub, monkeypatch):
 def test_recover_stale_running_task(db, seed, queue_stub, monkeypatch):
     from datetime import timedelta
 
-    from app.models.base import utcnow
     from sqlalchemy import update
+
+    from app.models.base import utcnow
 
     _execution, task = seed()
     # Simulate a crashed worker: task stuck RUNNING with an old updated_at.

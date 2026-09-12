@@ -4,7 +4,7 @@ A Task is a single subtask produced by the planner and executed by one agent.
 """
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     JSON,
@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -22,9 +23,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..enums import TaskStatus
 from .base import Base, TimestampMixin
 
+if TYPE_CHECKING:
+    from .execution import Execution
+    from .task_result import TaskResult
+
 
 class Task(Base, TimestampMixin):
     __tablename__ = "tasks"
+    # Speeds up the stale-task reaper (WHERE status='RUNNING' AND updated_at < cutoff).
+    __table_args__ = (Index("ix_tasks_status_updated_at", "status", "updated_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(

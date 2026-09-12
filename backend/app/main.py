@@ -6,13 +6,15 @@ dev server can proxy a single path to the backend.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .api.routes import executions, health, metrics, system
+from .api.security import require_api_key
 from .config import get_settings
 from .logging_config import configure_logging, get_logger
-from .api.routes import executions, health, metrics, system
+from .middleware import RateLimitMiddleware, RequestSizeLimitMiddleware
 
 configure_logging()
 settings = get_settings()
@@ -36,14 +38,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Rate limiting + request-size limits (Phase 5). Pure-ASGI so SSE keeps working.
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
 
 # Health is exposed both at the root (/health, used by container health checks)
-# and under /api/health (convenient behind the frontend proxy).
+# and under /api/health (convenient behind the frontend proxy). Health stays open.
 app.include_router(health.router)
 app.include_router(health.router, prefix="/api")
-app.include_router(executions.router, prefix="/api")
-app.include_router(system.router, prefix="/api")
-app.include_router(metrics.router)  # /metrics (Prometheus) + /api/metrics (JSON)
+# Protected API routes (auth is a no-op unless API keys are configured).
+app.include_router(executions.router, prefix="/api", dependencies=[Depends(require_api_key)])
+app.include_router(system.router, prefix="/api", dependencies=[Depends(require_api_key)])
+app.include_router(metrics.router)  # /metrics (Prometheus, open) + /api/metrics (protected)
 
 
 @app.get("/", tags=["root"], summary="Service information")

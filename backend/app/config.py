@@ -84,6 +84,26 @@ class Settings(BaseSettings):
     agent_max_tool_iterations: int = 3
     fetch_max_bytes: int = 20000  # cap for the URL fetch tool
 
+    # --- Security / limits (Phase 5) --------------------------------------
+    # API key auth. If BOTH are empty, auth is DISABLED (dev-friendly). Set one
+    # in production. Multiple keys may be supplied comma-separated in api_keys.
+    api_key: Optional[str] = None
+    api_keys: str = ""
+    # Requests per minute per client (API key or IP). 0 disables rate limiting.
+    rate_limit_per_minute: int = 0
+    # Reject request bodies larger than this many bytes (413).
+    max_request_bytes: int = 65536
+    # uvicorn worker processes (read by the container entrypoint).
+    uvicorn_workers: int = 1
+
+    @property
+    def configured_api_keys(self) -> list[str]:
+        keys = []
+        if self.api_key:
+            keys.append(self.api_key.strip())
+        keys.extend(k.strip() for k in (self.api_keys or "").split(",") if k.strip())
+        return [k for k in keys if k]
+
     # --- Logging format ----------------------------------------------------
     log_format: str = "text"  # text | json
 

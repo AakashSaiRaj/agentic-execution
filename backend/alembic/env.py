@@ -5,9 +5,9 @@ same database as the app, regardless of environment.
 """
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from app.config import get_settings
 from app.models import Base  # noqa: F401 - ensures all models are imported
 

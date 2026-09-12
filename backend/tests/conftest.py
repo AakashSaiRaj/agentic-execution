@@ -11,6 +11,8 @@ _TMPDIR = tempfile.mkdtemp(prefix="aep-test-")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMPDIR}/test.db")
 os.environ.setdefault("EXECUTION_MODE", "queue")
 os.environ.setdefault("LLM_PROVIDER", "mock")
+# Use a separate Redis logical DB for local test isolation (CI overrides this).
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("TASK_MAX_RETRIES", "2")
 os.environ.setdefault("TASK_TIMEOUT_SECONDS", "0.3")
 os.environ.setdefault("RETRY_BACKOFF_BASE_SECONDS", "0")

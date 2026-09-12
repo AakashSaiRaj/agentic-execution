@@ -5,17 +5,22 @@ and executed end to end.
 """
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, Uuid
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..enums import ExecutionStatus
 from .base import Base, TimestampMixin
 
+if TYPE_CHECKING:
+    from .task import Task
+
 
 class Execution(Base, TimestampMixin):
     __tablename__ = "executions"
+    # Speeds up the "recent executions" listing (ORDER BY created_at DESC).
+    __table_args__ = (Index("ix_executions_created_at", "created_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_request: Mapped[str] = mapped_column(Text, nullable=False)

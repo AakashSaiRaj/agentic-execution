@@ -1,9 +1,11 @@
-"""Health check endpoint."""
+"""Health / readiness endpoint (Phase 5)."""
 from __future__ import annotations
 
 from fastapi import APIRouter
+from sqlalchemy import text
 
 from ...config import get_settings
+from ...database import SessionLocal
 
 router = APIRouter(tags=["health"])
 
@@ -17,8 +19,21 @@ def health() -> dict:
         "environment": settings.environment,
         "llm_provider": settings.llm_provider,
         "execution_mode": settings.execution_mode,
+        "auth": "enabled" if settings.configured_api_keys else "disabled",
     }
-    # In queue mode, report Redis connectivity (best-effort; never 500 on it).
+
+    # Database connectivity.
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        payload["database"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        payload["database"] = f"unavailable: {exc}"
+        payload["status"] = "degraded"
+    finally:
+        db.close()
+
+    # Redis connectivity (queue mode).
     if settings.execution_mode.lower() == "queue":
         try:
             from ...jobqueue import get_redis, queue_depth
@@ -28,4 +43,6 @@ def health() -> dict:
             payload["queue_depth"] = queue_depth()
         except Exception as exc:  # noqa: BLE001
             payload["redis"] = f"unavailable: {exc}"
+            payload["status"] = "degraded"
+
     return payload

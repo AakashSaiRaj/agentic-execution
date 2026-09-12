@@ -1,0 +1,100 @@
+# Production-style stack for the AI Agent Execution Platform (Phase 5).
+#
+#   API_KEY=$(openssl rand -hex 16) podman compose -f docker-compose.prod.yml up --build -d
+#   podman compose -f docker-compose.prod.yml up --build -d --scale worker=3
+#
+# Differences from the dev stack: static frontend served by nginx, API-key auth
+# and rate limiting enabled, JSON structured logs, multiple uvicorn workers,
+# restart policies, and no host ports exposed for the datastores.
+
+name: agentic-execution-platform-prod
+
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
+      POSTGRES_DB: agent_platform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://agent:${POSTGRES_PASSWORD:-agent}@db:5432/agent_platform
+      REDIS_URL: redis://redis:6379/0
+      EXECUTION_MODE: queue
+      API_KEY: ${API_KEY:?set API_KEY for the production stack}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-65536}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-mock-model}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://agent:${POSTGRES_PASSWORD:-agent}@db:5432/agent_platform
+      REDIS_URL: redis://redis:6379/0
+      EXECUTION_MODE: queue
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-8}
+      TASK_MAX_RETRIES: ${TASK_MAX_RETRIES:-3}
+      TASK_TIMEOUT_SECONDS: ${TASK_TIMEOUT_SECONDS:-30}
+      TOOLS_ENABLED: ${TOOLS_ENABLED:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-mock-model}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_KEY: ${API_KEY:-}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8080}:5173"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

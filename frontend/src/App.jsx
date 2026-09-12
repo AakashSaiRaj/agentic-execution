@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createExecution, getExecution, getMetrics, listExecutions } from './api'
+import { createExecution, eventsUrl, getExecution, getMetrics, listExecutions } from './api'
 import TaskForm from './components/TaskForm'
 import ExecutionView from './components/ExecutionView'
 import ActivityLog from './components/ActivityLog'
@@ -94,7 +94,7 @@ export default function App() {
     const status = execution?.status
     if (!id || TERMINAL.has(status)) return undefined
 
-    const es = new EventSource(`/api/executions/${id}/events`)
+    const es = new EventSource(eventsUrl(id))
     esRef.current = es
 
     es.addEventListener('update', (e) => {

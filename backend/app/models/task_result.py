@@ -5,11 +5,15 @@ results can grow independently (e.g. multiple result artifacts in later phases)
 and to keep a clean 1:1 record of produced output.
 """
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from .task import Task
 
 
 class TaskResult(Base, TimestampMixin):

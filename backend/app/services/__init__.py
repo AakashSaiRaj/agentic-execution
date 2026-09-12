@@ -2,7 +2,7 @@
 from .aggregator import Aggregator
 from .executor import ExecutionRunResult, SequentialExecutor, TaskOutcome
 from .orchestrator import run_execution
-from .planner import Planner, PlannedSubtask
+from .planner import PlannedSubtask, Planner
 from .scheduler import execute_task, plan_execution, schedule_execution
 
 __all__ = [

@@ -1,19 +1,22 @@
 # AI Agent Execution Platform
 
-Decompose a complex task into subtasks, execute specialized agents, and return an
-aggregated result. This repository is being built in phases; **Phases 1–4 are
-complete** (MVP, distributed async execution, reliability + real-time, and tools
-+ observability).
+A distributed platform that decomposes a complex task into subtasks, executes
+specialized agents (with tools) through an asynchronous worker system, and
+streams execution progress and results to the user. **Feature-complete
+(Phases 1–5).**
 
 - **Backend:** Python + FastAPI + SQLAlchemy
-- **Queue / workers:** Redis job queue + distributed worker processes (Phase 2)
+- **Queue / workers:** Redis job queue + distributed worker processes
 - **Reliability:** retries w/ exponential backoff, timeouts, idempotency,
-  dead-letter queue, crash recovery (Phase 3)
-- **Real-time:** Server-Sent Events stream to the UI (Phase 3)
+  dead-letter queue, crash recovery
+- **Real-time:** Server-Sent Events stream to the UI (no polling)
 - **Tools:** agents invoke registered tools (calculator, web search, URL fetch)
-  via structured tool calling (Phase 4)
+  via structured tool calling
 - **Observability:** execution/task durations, token usage, estimated cost,
-  tool-call counts, and a `/metrics` endpoint (Phase 4)
+  tool-call counts, structured logs, and a `/metrics` endpoint
+- **Production:** API-key auth, rate limiting, request limits, health checks,
+  graceful shutdown, DB indexes, prod Docker config, and a GitHub Actions CI
+  pipeline (lint + unit + integration)
 - **Database:** SQLite by default (zero setup); Postgres for a production-style run
 - **Frontend:** React (Vite)
 - **LLM:** provider abstraction with a built-in **mock** provider (no API key needed),
@@ -74,21 +77,27 @@ sequential design (`inline` mode) is still available for a zero-dependency run.
 │   │   ├── llm/              # provider abstraction: base, mock, openai, anthropic
 │   │   ├── models/           # SQLAlchemy models (execution, task, task_result)
 │   │   ├── schemas/          # Pydantic request/response models
+│   │   ├── api/              # routes + security (auth) 
 │   │   ├── services/         # planner, executor, aggregator, orchestrator, scheduler
-│   │   ├── tools/            # tool registry + calculator / web_search / fetch_url (Phase 4)
-│   │   ├── observability/    # DB-derived metrics collector (Phase 4)
-│   │   ├── jobqueue.py       # Redis job queue (Phase 2)
-│   │   ├── worker.py         # distributed worker process (Phase 2)
+│   │   ├── tools/            # tool registry + calculator / web_search / fetch_url
+│   │   ├── observability/    # DB-derived metrics collector
+│   │   ├── middleware.py     # rate limiting + request-size limits (Phase 5)
+│   │   ├── jobqueue.py       # Redis job queue
+│   │   ├── worker.py         # distributed worker process
 │   │   ├── config.py         # env-driven settings
 │   │   ├── database.py       # engine + session
 │   │   └── main.py           # FastAPI app
-│   ├── alembic/              # migrations (0001..0004)
-│   ├── tests/                # pytest (reliability + tools)
+│   ├── alembic/              # migrations (0001..0005)
+│   ├── tests/                # pytest (reliability, tools, integration)
+│   ├── pyproject.toml        # ruff + pytest config
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   └── entrypoint.sh
-├── frontend/                 # React + Vite app
-├── docker-compose.yml        # db + redis + backend + worker + frontend
+├── frontend/                 # React + Vite app (+ Dockerfile.prod, nginx.conf)
+├── scripts/loadtest.py       # basic load test
+├── .github/workflows/ci.yml  # lint + unit + integration
+├── docker-compose.yml        # dev stack (db + redis + backend + worker + frontend)
+├── docker-compose.prod.yml   # production stack (nginx frontend, auth, workers)
 └── README.md
 ```
 
@@ -200,6 +209,10 @@ All configuration is via environment variables (see `backend/.env.example` and
 | `TOOL_TIMEOUT_SECONDS` | `10` | Per-tool execution timeout |
 | `AGENT_MAX_TOOL_ITERATIONS` | `3` | Max tool-call rounds per agent |
 | `FETCH_MAX_BYTES` | `20000` | Truncation cap for the fetch_url tool |
+| `API_KEY` / `API_KEYS` | — | API key(s). If unset, **auth is disabled** (dev). Set in prod. |
+| `RATE_LIMIT_PER_MINUTE` | `0` | Requests/min per client (0 = disabled) |
+| `MAX_REQUEST_BYTES` | `65536` | Reject larger request bodies (413) |
+| `UVICORN_WORKERS` | `1` | API worker processes (prod) |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | — | Required only for real providers |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | `text` or `json` (structured logs) |
@@ -220,11 +233,16 @@ export OPENAI_API_KEY=sk-...
 
 Base URL: `http://localhost:8000` (paths are under `/api`).
 
+> **Auth:** when `API_KEY` is set, send it as `X-API-Key: <key>` (or
+> `Authorization: Bearer <key>`, or `?api_key=<key>` for SSE). With no key
+> configured, auth is disabled. `/health` and `/metrics` stay open.
+
 **Create an execution**
 ```bash
 curl -X POST http://localhost:8000/api/executions \
   -H 'Content-Type: application/json' \
   -d '{"user_request": "Compare REST and gRPC for an internal microservice."}'
+# with auth enabled, add:  -H 'X-API-Key: <your-key>'
 ```
 
 **Get an execution (status, subtasks, results, final answer)**
@@ -426,12 +444,82 @@ panel.
 
 ---
 
+## Production deployment (Phase 5)
+
+A production-style stack is defined in `docker-compose.prod.yml`: the frontend is
+built to static files and served by **nginx** (which also reverse-proxies the API
+and streams SSE), the backend runs multiple **uvicorn workers**, **API-key auth**
+and **rate limiting** are enabled, logs are **JSON**, datastore ports are not
+exposed, and every service has a `restart` policy.
+
+```bash
+# API_KEY is required for the prod stack
+API_KEY=$(openssl rand -hex 16) podman compose -f docker-compose.prod.yml up --build -d
+# scale workers horizontally
+API_KEY=... podman compose -f docker-compose.prod.yml up --build -d --scale worker=3
+```
+
+The UI is served at http://localhost:8080 and calls the API through nginx.
+
+**Security**
+- API-key auth on all `/api/*` routes (header, bearer, or `?api_key=` for SSE).
+- Per-client rate limiting and a request-body size cap.
+- Secrets (API key, LLM keys, DB password) come from environment variables and
+  are never logged.
+- `/health` reports liveness plus DB/Redis readiness; workers shut down
+  gracefully on SIGTERM (in-flight tasks finish or are recovered by the reaper).
+
+## Performance / load test
+
+A dependency-free load test fires N executions concurrently and reports
+throughput and latency:
+
+```bash
+python scripts/loadtest.py --base http://localhost:8000 --count 100 --concurrency 25
+```
+
+Sample run on the dev Podman stack (Postgres + Redis + **one** worker with 4
+threads, mock LLM, on a laptop):
+
+| Executions | Concurrency | Wall time | Throughput | p50 / p95 latency | Result |
+|---|---|---|---|---|---|
+| 30 | 10 | 1.74 s | 17.3 exec/s | 0.36 s / 0.83 s | 30/30 ✅ |
+| 100 | 25 | 6.12 s | 16.3 exec/s | 1.43 s / 2.68 s | 100/100 ✅ |
+
+That's ~300 agent tasks (100 executions × 3) processed in ~6 s. Throughput scales
+by raising `WORKER_CONCURRENCY` or running more worker containers (`--scale
+worker=N`); with a real LLM, latency is dominated by model calls and
+concurrency matters much more.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs three jobs on every push/PR:
+- **lint** — `ruff check`
+- **unit-tests** — `pytest -m "not integration"`
+- **integration-tests** — spins up Postgres + Redis services and runs the
+  full-flow integration test (`pytest -m integration`).
+
+Run locally:
+```bash
+cd backend && source .venv/bin/activate
+ruff check .
+pytest -q            # unit + integration (integration needs Redis)
+```
+
+## Screenshots
+
+> Add dashboard images to `docs/` and reference them here, e.g.
+> `![Dashboard](docs/dashboard.png)`. The dashboard (http://localhost:5173)
+> shows the live task timeline, per-task stats, activity log and platform metrics.
+
+---
+
 ## Roadmap
 
 - **Phase 1:** end-to-end MVP, sequential execution ✅
 - **Phase 2:** Redis job queue + distributed workers, concurrent tasks, real-time UI ✅
 - **Phase 3:** retries, backoff, timeouts, idempotency, dead-letter queue, crash recovery, SSE ✅
 - **Phase 4:** agent tools (calculator, web search, fetch) + observability / `/metrics` ✅
-- **Phase 5:** auth, rate limiting, health checks, CI, integration + load tests
+- **Phase 5:** auth, rate limiting, health checks, graceful shutdown, DB indexes, prod Docker, CI, integration + load tests ✅
 
-Built and tested one phase at a time.
+The project is considered complete.
