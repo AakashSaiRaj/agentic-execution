@@ -1,0 +1,34 @@
+"""Execution ORM model.
+
+An Execution represents a single user request that gets planned into subtasks
+and executed end to end.
+"""
+import uuid
+from typing import List, Optional
+
+from sqlalchemy import String, Text, Uuid
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ..enums import ExecutionStatus
+from .base import Base, TimestampMixin
+
+
+class Execution(Base, TimestampMixin):
+    __tablename__ = "executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_request: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ExecutionStatus.PENDING.value, index=True
+    )
+    final_result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    tasks: Mapped[List["Task"]] = relationship(
+        back_populates="execution",
+        cascade="all, delete-orphan",
+        order_by="Task.order_index",
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return f"<Execution id={self.id} status={self.status}>"

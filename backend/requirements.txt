@@ -1,0 +1,22 @@
+# Core web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Data / ORM
+SQLAlchemy==2.0.36
+alembic==1.14.0
+pydantic==2.10.4
+pydantic-settings==2.6.1
+
+# Postgres driver (used when DATABASE_URL points at Postgres)
+psycopg2-binary==2.9.10
+
+# HTTP client (used by optional real LLM providers / future tools)
+httpx==0.28.1
+
+# ---------------------------------------------------------------------------
+# Optional LLM provider SDKs. The default provider is "mock" and needs none of
+# these. Install the one you want if you set LLM_PROVIDER=openai|anthropic:
+#   pip install "openai>=1.0"
+#   pip install "anthropic>=0.39"
+# ---------------------------------------------------------------------------

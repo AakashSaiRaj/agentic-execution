@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+backend/.venv/
+*.db
+
+# Environment
+.env
+backend/.env
+frontend/.env
+
+# Node
+node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Project brief (kept local, not tracked)
+aim.txt
