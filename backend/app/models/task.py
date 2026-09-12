@@ -3,9 +3,19 @@
 A Task is a single subtask produced by the planner and executed by one agent.
 """
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..enums import TaskStatus
@@ -38,6 +48,14 @@ class Task(Base, TimestampMixin):
     # Set atomically to true when this task has been pushed to the queue, so it
     # is never enqueued twice by concurrent scheduler passes.
     enqueued: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # --- Phase 3: reliability ---------------------------------------------
+    # Number of execution attempts made so far (incremented on each failure).
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # When a RETRYING task becomes eligible to run again.
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     execution: Mapped["Execution"] = relationship(back_populates="tasks")
     result: Mapped[Optional["TaskResult"]] = relationship(

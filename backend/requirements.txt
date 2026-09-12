@@ -14,6 +14,9 @@ psycopg2-binary==2.9.10
 # Redis job queue (Phase 2: distributed workers)
 redis==5.2.1
 
+# Testing (Phase 3)
+pytest==8.3.4
+
 # HTTP client (used by optional real LLM providers / future tools)
 httpx==0.28.1
 

@@ -39,6 +39,11 @@ class MockLLMProvider(LLMProvider):
     def complete(self, prompt: str, *, system: Optional[str] = None) -> LLMResponse:
         system_l = (system or "").lower()
 
+        # Test hook: agent calls whose prompt contains "force_fail" raise, so the
+        # retry / dead-letter path can be exercised on demand. Planning is exempt.
+        if "planning assistant" not in system_l and "force_fail" in (prompt or "").lower():
+            raise RuntimeError("forced failure (mock provider saw 'force_fail')")
+
         if "planning assistant" in system_l:
             text = self._plan(prompt)
         elif "research agent" in system_l:

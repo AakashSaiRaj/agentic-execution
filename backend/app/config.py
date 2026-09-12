@@ -57,6 +57,30 @@ class Settings(BaseSettings):
     # Blocking dequeue timeout (seconds); also how often workers check for shutdown.
     worker_poll_timeout: int = 5
 
+    # --- Reliability (Phase 3) --------------------------------------------
+    # Maximum retries after the first attempt (total tries = max_retries + 1).
+    task_max_retries: int = 3
+    # Hard timeout for a single task execution.
+    task_timeout_seconds: float = 30.0
+    # Exponential backoff between retries: delay = base * 2**(attempt-1), capped.
+    retry_backoff_base_seconds: float = 1.0
+    retry_backoff_max_seconds: float = 30.0
+    retry_backoff_jitter: bool = True
+    # A RUNNING task not updated within this window is treated as crashed and
+    # recovered (re-queued or failed). Should exceed task_timeout_seconds.
+    task_lease_seconds: float = 90.0
+    # How often the worker's reaper scans for stale RUNNING tasks.
+    recovery_interval_seconds: float = 15.0
+    # How often the worker promotes due delayed (retry) tasks to the queue.
+    delayed_poll_interval_seconds: float = 1.0
+
+    # --- Server-Sent Events (Phase 3) -------------------------------------
+    sse_poll_interval_seconds: float = 0.75
+    sse_max_seconds: int = 600
+
+    # --- Logging format ----------------------------------------------------
+    log_format: str = "text"  # text | json
+
     # --- CORS --------------------------------------------------------------
     # Comma-separated list of allowed origins, or "*" for all.
     cors_origins: str = "*"

@@ -18,9 +18,9 @@ from sqlalchemy import text
 
 from .config import get_settings
 from .database import SessionLocal
-from .jobqueue import JobType, dequeue, get_redis
+from .jobqueue import JobType, dequeue, get_redis, promote_due
 from .logging_config import configure_logging, get_logger
-from .services.scheduler import execute_task, plan_execution
+from .services.scheduler import execute_task, plan_execution, recover_stale_tasks
 
 logger = get_logger(__name__)
 
@@ -63,6 +63,35 @@ def _consumer_loop(worker_id: int, poll_timeout: int) -> None:
         except Exception:  # noqa: BLE001 - never let one bad job kill the loop
             logger.exception("error handling job %r", job)
     logger.info("consumer thread %d stopped", worker_id)
+
+
+def _promoter_loop(interval: float) -> None:
+    """Move due delayed (retry) tasks back onto the main queue."""
+    logger.info("promoter thread started")
+    while not _stop.is_set():
+        try:
+            moved = promote_due(time.time())
+            if moved:
+                logger.info("promoted %d delayed task(s) to the queue", moved)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("promoter error: %s", exc)
+        _stop.wait(interval)
+    logger.info("promoter thread stopped")
+
+
+def _reaper_loop(interval: float) -> None:
+    """Recover tasks stuck in RUNNING past their lease (crashed workers)."""
+    logger.info("reaper thread started")
+    while not _stop.is_set():
+        db = SessionLocal()
+        try:
+            recover_stale_tasks(db)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("reaper error: %s", exc)
+        finally:
+            db.close()
+        _stop.wait(interval)
+    logger.info("reaper thread stopped")
 
 
 def _wait_for_dependencies(max_attempts: int = 60) -> None:
@@ -123,7 +152,23 @@ def main() -> None:
         thread.start()
         threads.append(thread)
 
-    logger.info("Worker ready with %d consumer thread(s)", len(threads))
+    # Maintenance threads: promote due retries, and recover crashed-worker tasks.
+    promoter = threading.Thread(
+        target=_promoter_loop, args=(settings.delayed_poll_interval_seconds,), daemon=True
+    )
+    promoter.start()
+    threads.append(promoter)
+
+    reaper = threading.Thread(
+        target=_reaper_loop, args=(settings.recovery_interval_seconds,), daemon=True
+    )
+    reaper.start()
+    threads.append(reaper)
+
+    logger.info(
+        "Worker ready with %d consumer thread(s) + promoter + reaper",
+        len(threads) - 2,
+    )
 
     try:
         while not _stop.is_set():

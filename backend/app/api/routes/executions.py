@@ -1,15 +1,18 @@
 """Execution REST endpoints."""
 from __future__ import annotations
 
+import json
+import time
 import uuid
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import get_settings
-from ...database import get_db
+from ...database import SessionLocal, get_db
 from ...enums import ExecutionStatus
 from ...jobqueue import enqueue_plan
 from ...logging_config import get_logger
@@ -20,6 +23,8 @@ from ...services.orchestrator import run_execution
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/executions", tags=["executions"])
+
+_TERMINAL = (ExecutionStatus.COMPLETED.value, ExecutionStatus.FAILED.value)
 
 
 @router.post(
@@ -103,3 +108,51 @@ def get_execution_tasks(
         .order_by(Task.order_index)
     )
     return list(db.scalars(stmt).all())
+
+
+@router.get(
+    "/{execution_id}/events",
+    summary="Stream execution + task updates via Server-Sent Events",
+)
+def stream_execution_events(execution_id: uuid.UUID) -> StreamingResponse:
+    """SSE stream: pushes the full execution state whenever it changes, so the
+    frontend does not have to poll. Emits an ``update`` event on each change and
+    a ``done`` event when the execution reaches a terminal state.
+    """
+    settings = get_settings()
+
+    def event_stream():
+        db = SessionLocal()
+        last_payload = None
+        deadline = time.time() + settings.sse_max_seconds
+        try:
+            while time.time() < deadline:
+                db.expire_all()
+                execution = db.get(Execution, execution_id)
+                if execution is None:
+                    yield f"event: error\ndata: {json.dumps({'detail': 'not found'})}\n\n"
+                    return
+
+                payload = ExecutionRead.model_validate(execution).model_dump(mode="json")
+                data = json.dumps(payload)
+                if data != last_payload:
+                    yield f"event: update\ndata: {data}\n\n"
+                    last_payload = data
+                    if execution.status in _TERMINAL:
+                        yield "event: done\ndata: {}\n\n"
+                        return
+                else:
+                    yield ": keepalive\n\n"
+                time.sleep(settings.sse_poll_interval_seconds)
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

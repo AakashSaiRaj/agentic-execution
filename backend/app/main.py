@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .config import get_settings
 from .logging_config import configure_logging, get_logger
-from .api.routes import executions, health
+from .api.routes import executions, health, system
 
 configure_logging()
 settings = get_settings()
@@ -42,6 +42,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(health.router, prefix="/api")
 app.include_router(executions.router, prefix="/api")
+app.include_router(system.router, prefix="/api")
 
 
 @app.get("/", tags=["root"], summary="Service information")

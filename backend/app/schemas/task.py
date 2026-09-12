@@ -28,6 +28,8 @@ class TaskRead(BaseModel):
     status: TaskStatus
     order_index: int
     depends_on: List[int] = Field(default_factory=list)
+    attempts: int = 0
+    next_attempt_at: Optional[datetime] = None
     error: Optional[str] = None
     created_at: datetime
     updated_at: datetime

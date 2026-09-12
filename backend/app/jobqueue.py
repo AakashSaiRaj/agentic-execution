@@ -25,6 +25,8 @@ logger = get_logger(__name__)
 
 # Redis keys
 QUEUE_KEY = "aep:jobs"
+DELAYED_KEY = "aep:delayed"  # ZSET: task_id -> run-at epoch (retry backoff)
+DLQ_KEY = "aep:dlq"  # LIST: permanently-failed jobs
 
 
 class JobType:
@@ -68,3 +70,55 @@ def dequeue(timeout: int = 5) -> Optional[dict]:
 
 def queue_depth() -> int:
     return int(get_redis().llen(QUEUE_KEY))
+
+
+# ---------------------------------------------------------------------------
+# Delayed / retry queue (ZSET scored by run-at epoch)
+# ---------------------------------------------------------------------------
+def schedule_task(task_id: uuid.UUID, run_at_epoch: float) -> None:
+    """Schedule a task to be (re)enqueued at ``run_at_epoch`` (retry backoff)."""
+    get_redis().zadd(DELAYED_KEY, {str(task_id): run_at_epoch})
+    logger.info("scheduled retry at epoch=%.0f", run_at_epoch)
+
+
+def promote_due(now_epoch: float) -> int:
+    """Move all due delayed tasks into the main queue. Returns the count moved.
+
+    Uses a conditional ZREM so that with multiple workers promoting, each due
+    task is moved exactly once.
+    """
+    r = get_redis()
+    due = r.zrangebyscore(DELAYED_KEY, "-inf", now_epoch)
+    moved = 0
+    for member in due:
+        if r.zrem(DELAYED_KEY, member) == 1:
+            r.rpush(QUEUE_KEY, json.dumps({"type": JobType.TASK, "id": member}))
+            moved += 1
+    return moved
+
+
+def delayed_depth() -> int:
+    return int(get_redis().zcard(DELAYED_KEY))
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter queue (permanently-failed jobs)
+# ---------------------------------------------------------------------------
+def push_dead_letter(entry: dict) -> None:
+    get_redis().rpush(DLQ_KEY, json.dumps(entry))
+    logger.warning("pushed task to dead-letter queue")
+
+
+def dead_letter_entries(limit: int = 50) -> list:
+    raw = get_redis().lrange(DLQ_KEY, -limit, -1)
+    entries = []
+    for item in raw:
+        try:
+            entries.append(json.loads(item))
+        except (ValueError, TypeError):
+            continue
+    return list(reversed(entries))  # most recent first
+
+
+def dead_letter_depth() -> int:
+    return int(get_redis().llen(DLQ_KEY))
